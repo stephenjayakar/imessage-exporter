@@ -2,7 +2,7 @@
  JSON export functionality.
 */
 
-use std::{fs::File, io::BufWriter};
+use std::{fs::File, io::BufWriter, collections::HashMap};
 use serde::Serialize;
 use crate::app::{error::RuntimeError, runtime::Config};
 use imessage_database::{
@@ -17,6 +17,12 @@ struct MessageJson {
     text: Option<String>,
     sender: String,
     timestamp: i64,
+}
+
+#[derive(Serialize)]
+struct ConversationJson {
+    participants: Vec<String>,
+    messages: Vec<MessageJson>,
 }
 
 pub struct JSON<'a> {
@@ -42,7 +48,8 @@ impl<'a> Exporter<'a> for JSON<'a> {
             .query_map([], |row| Message::from_row(row))
             .map_err(|e| RuntimeError::DatabaseError(TableError::Messages(e)))?;
 
-        let mut json_messages = Vec::new();
+        // Group messages by conversation
+        let mut conversations: HashMap<String, Vec<MessageJson>> = HashMap::new();
 
         for msg in messages {
             let msg = msg.map_err(|e| RuntimeError::DatabaseError(TableError::Messages(e)))?;
@@ -58,10 +65,43 @@ impl<'a> Exporter<'a> for JSON<'a> {
                 timestamp: msg.date,
             };
 
-            json_messages.push(json_msg);
+            // Use chat_id as the conversation key
+            let chat_id = msg.chat_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string());
+            conversations.entry(chat_id)
+                .or_insert_with(Vec::new)
+                .push(json_msg);
         }
 
-        serde_json::to_writer_pretty(&mut self.writer, &json_messages)
+        // Convert conversations to final format and sort messages by timestamp
+        let mut final_conversations: Vec<ConversationJson> = conversations
+            .into_iter()
+            .map(|(chat_id, mut messages)| {
+                // Sort messages by timestamp
+                messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                
+                // Get unique participants from messages
+                let mut participants: Vec<String> = messages.iter()
+                    .map(|m| m.sender.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                participants.sort();
+
+                ConversationJson {
+                    participants,
+                    messages,
+                }
+            })
+            .collect();
+
+        // Sort conversations by most recent message
+        final_conversations.sort_by(|a, b| {
+            let a_latest = a.messages.last().map(|m| m.timestamp).unwrap_or(0);
+            let b_latest = b.messages.last().map(|m| m.timestamp).unwrap_or(0);
+            b_latest.cmp(&a_latest)
+        });
+
+        serde_json::to_writer_pretty(&mut self.writer, &final_conversations)
             .map_err(|e| RuntimeError::CreateError(std::io::Error::new(std::io::ErrorKind::Other, e), self.config.options.export_path.clone()))?;
 
         Ok(())
@@ -93,6 +133,8 @@ mod tests {
         file.read_to_string(&mut contents).unwrap();
 
         // Note: We can't test exact contents since timestamps will vary
+        assert!(contents.contains("\"participants\""));
+        assert!(contents.contains("\"messages\""));
         assert!(contents.contains("\"id\""));
         assert!(contents.contains("\"text\""));
         assert!(contents.contains("\"sender\""));
