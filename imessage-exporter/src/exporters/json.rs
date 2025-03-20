@@ -8,6 +8,7 @@ use crate::app::{error::RuntimeError, runtime::Config};
 use imessage_database::{
     tables::{messages::Message, table::Table},
     error::table::TableError,
+    message_types::variants::Variant,
 };
 use super::exporter::Exporter;
 
@@ -17,6 +18,8 @@ struct MessageJson {
     text: Option<String>,
     sender: String,
     timestamp: i64,
+    #[serde(rename = "type")]
+    message_type: String,
 }
 
 #[derive(Serialize)]
@@ -41,7 +44,7 @@ impl<'a> Exporter<'a> for JSON<'a> {
     }
 
     fn iter_messages(&mut self) -> Result<(), RuntimeError> {
-        let mut statement = Message::get(&self.config.db)
+        let mut statement = Message::stream_rows(&self.config.db, &self.config.options.query_context)
             .map_err(RuntimeError::DatabaseError)?;
 
         let messages = statement
@@ -58,11 +61,17 @@ impl<'a> Exporter<'a> for JSON<'a> {
             // Generate text content
             let _ = msg.generate_text(&self.config.db);
 
+            let message_type = match msg.variant() {
+                Variant::Tapback(..) => "reaction".to_string(),
+                _ => "message".to_string(),
+            };
+
             let json_msg = MessageJson {
                 id: msg.guid.clone(),
                 text: msg.text.clone(),
                 sender: self.config.who(msg.handle_id, msg.is_from_me(), &msg.destination_caller_id).to_string(),
                 timestamp: msg.date,
+                message_type,
             };
 
             // Use chat_id as the conversation key
@@ -75,7 +84,7 @@ impl<'a> Exporter<'a> for JSON<'a> {
         // Convert conversations to final format and sort messages by timestamp
         let mut final_conversations: Vec<ConversationJson> = conversations
             .into_iter()
-            .map(|(chat_id, mut messages)| {
+            .map(|(_, mut messages)| {
                 // Sort messages by timestamp
                 messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
                 
@@ -139,6 +148,7 @@ mod tests {
         assert!(contents.contains("\"text\""));
         assert!(contents.contains("\"sender\""));
         assert!(contents.contains("\"timestamp\""));
+        assert!(contents.contains("\"type\""));
 
         // Cleanup
         fs::remove_file("messages.json").unwrap();
