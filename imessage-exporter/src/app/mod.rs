@@ -5,3 +5,4 @@ pub mod options;
 pub mod progress;
 pub mod runtime;
 pub mod sanitizers;
+pub mod exports;

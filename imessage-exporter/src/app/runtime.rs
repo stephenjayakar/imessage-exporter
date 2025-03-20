@@ -15,6 +15,7 @@ use rusqlite::Connection;
 
 use crate::{
     Exporter, HTML, TXT,
+    exporters::json::JSON,
     app::{
         compatibility::attachment_manager::AttachmentManagerMode, error::RuntimeError,
         export_type::ExportType, options::Options, sanitizers::sanitize_filename,
@@ -443,6 +444,9 @@ impl Config {
                 }
                 ExportType::Txt => {
                     TXT::new(self)?.iter_messages()?;
+                }
+                ExportType::Json => {
+                    JSON::new(self)?.iter_messages()?;
                 }
             }
         }
