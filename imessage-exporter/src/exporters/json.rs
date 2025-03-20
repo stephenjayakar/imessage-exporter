@@ -46,12 +46,15 @@ impl<'a> Exporter<'a> for JSON<'a> {
 
         for msg in messages {
             let msg = msg.map_err(|e| RuntimeError::DatabaseError(TableError::Messages(e)))?;
-            let msg = Message::extract(Ok(Ok(msg))).map_err(RuntimeError::DatabaseError)?;
+            let mut msg = Message::extract(Ok(Ok(msg))).map_err(RuntimeError::DatabaseError)?;
+            
+            // Generate text content
+            let _ = msg.generate_text(&self.config.db);
 
             let json_msg = MessageJson {
-                id: msg.guid,
-                text: msg.text,
-                sender: if msg.is_from_me { "Me".to_string() } else { "Other".to_string() },
+                id: msg.guid.clone(),
+                text: msg.text.clone(),
+                sender: self.config.who(msg.handle_id, msg.is_from_me(), &msg.destination_caller_id).to_string(),
                 timestamp: msg.date,
             };
 
